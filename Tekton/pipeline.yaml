@@ -1,0 +1,83 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: react-app-ci-pipeline
+  namespace: tekton # Ensure this matches your namespace
+spec:
+  workspaces:
+    - name: shared-workspace
+    - name: basic-auth-workspace
+    - name: deploy-repo-workspace # New workspace for the deployment repository
+  params:
+    - name: REPO_URL
+      description: URL of the Git repository for application code
+    - name: REVISION
+      description: Revision to checkout (branch, tag, sha, ref, etc...)
+      default: "main"
+    - name: IMAGE_NAME
+      description: Name of the image to build (e.g., react-frontend)
+    - name: ACR_REGISTRY_URL
+      description: URL of your Azure Container Registry (e.g., myreactappregistry.azurecr.io)
+    - name: DEPLOYMENT_REPO_URL # New parameter for the deployment manifests repository
+      description: URL of the Git repository containing deployment manifests
+    - name: DEPLOYMENT_REPO_BRANCH # New parameter for the branch of deployment repository
+      description: Branch of the deployment repository to update
+    - name: DEPLOYMENT_FILE_PATH # New parameter for the path to the deployment file (relative to its root)
+      description: Path to the deployment.yaml file within the deployment repository (relative to its root)
+      default: "k8s/deployment.yaml" # Default based on your repo structure
+  tasks:
+    - name: fetch-code
+      taskRef:
+        name: git-clone
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+        - name: basic-auth
+          workspace: basic-auth-workspace
+      params:
+        - name: url
+          value: $(params.REPO_URL)
+        - name: revision
+          value: $(params.REVISION)
+        - name: subdirectory
+          value: ""
+        - name: deleteExisting
+          value: "true"
+    - name: build-and-push-image
+      taskRef:
+        name: build-and-push-react-image
+      runAfter:
+        - fetch-code
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: IMAGE_NAME
+          value: $(params.IMAGE_NAME)
+        - name: REGISTRY_URL
+          value: $(params.ACR_REGISTRY_URL)
+        - name: DOCKERFILE_PATH
+          value: ./Dockerfile
+        - name: CONTEXT_PATH
+          value: .
+        - name: IMAGE_TAG
+          value: $(tasks.fetch-code.results.commit) # Use the commit SHA as the image tag
+    - name: update-deployment-manifest
+      taskRef:
+        name: update-deployment-image # Reference to the update-deployment-image task
+      runAfter:
+        - build-and-push-image # Run after the image is built and pushed
+      workspaces:
+        - name: git-repo-dir
+          workspace: deploy-repo-workspace # Use a dedicated workspace for the deployment repo
+        - name: basic-auth
+          workspace: basic-auth-workspace # Re-use basic-auth for cloning deployment repo
+      params:
+        - name: TARGET_REPO_URL
+          value: $(params.DEPLOYMENT_REPO_URL)
+        - name: TARGET_REPO_BRANCH
+          value: $(params.DEPLOYMENT_REPO_BRANCH)
+        - name: NEW_IMAGE_FULL_PATH
+          value: "$(params.ACR_REGISTRY_URL)/$(params.IMAGE_NAME):$(tasks.fetch-code.results.commit)" # Full image path with the commit SHA tag
+        - name: DEPLOYMENT_FILE_PATH
+          value: $(params.DEPLOYMENT_FILE_PATH) # Pass the correct relative path from PipelineRun

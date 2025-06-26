@@ -1,0 +1,43 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: build-push-template
+  namespace: tekton
+spec:
+  params:
+    - name: repo-url
+    - name: revision
+    - name: image
+    - name: acr-username
+    - name: acr-password
+    - name: context
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1
+      kind: PipelineRun
+      metadata:
+        generateName: pipelinerun-build-push-
+      spec:
+        params:
+          - name: repo-url
+            value: $(tt.params.repo-url)
+          - name: revision
+            value: $(tt.params.revision)
+          - name: image
+            value: $(tt.params.image)
+          - name: acr-username
+            value: $(tt.params.acr-username)
+          - name: acr-password
+            value: $(tt.params.acr-password)
+          - name: context
+            value: $(tt.params.context)
+        pipelineRef:
+          name: pipeline-build-push
+        taskRunSpecs:
+          - pipelineTaskName: git-clone
+            taskServiceAccountName: git-sa
+          - pipelineTaskName: kaniko-build
+            taskServiceAccountName: git-sa
+        workspaces:
+          - name: shared-workspace
+            persistentVolumeClaim:
+              claimName: pvc

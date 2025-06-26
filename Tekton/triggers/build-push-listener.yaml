@@ -1,0 +1,23 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: build-push-listener
+  namespace: tekton
+spec:
+  serviceAccountName: git-sa
+  triggers:
+    - name: build-push-trigger
+      bindings:
+        - kind: TriggerBinding
+          ref: build-push-binding
+      interceptors:
+        - ref:
+            kind: ClusterInterceptor
+            name: cel
+          params:
+            - name: overlays
+              value:
+                - key: branch-name
+                  expression: body.resource.refUpdates[0].name.split('/')[2]
+      template:
+        ref: build-push-template

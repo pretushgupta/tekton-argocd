@@ -1,0 +1,47 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: react-app-ci-run-
+  namespace: tekton
+spec:
+  pipelineRef:
+    name: react-app-ci-pipeline
+  serviceAccountName: tekton-triggers-sa # Ensure this ServiceAccount exists and has necessary permissions
+  params:
+    - name: REPO_URL
+      value: <Repo_url>
+    - name: REVISION
+      value: <branch_name>
+    - name: IMAGE_NAME
+      value: <image_name>
+    - name: ACR_REGISTRY_URL
+      value: <acr_url>
+    - name: DEPLOYMENT_REPO_URL
+      value: <main_repo_url>
+    - name: DEPLOYMENT_REPO_BRANCH
+      value: <main_deployment_branch>
+    - name: DEPLOYMENT_FILE_PATH # Corrected path relative to the cloned deployment repo root
+      value: "k8s/deployment.yaml" # This should match your 'tekton-manifests/k8s/deployment.yaml' path
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+    - name: basic-auth-workspace
+      secret:
+        secretName: azure-devops-git-secret # Your existing secret for Git credentials
+    - name: deploy-repo-workspace # New workspace for cloning the deployment repository
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+  podTemplate:
+    securityContext:
+      fsGroup: 65532

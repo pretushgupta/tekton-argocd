@@ -1,0 +1,42 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: build-and-push-react-image
+  namespace: tekton 
+spec:
+  workspaces:
+    - name: source
+  params:
+    - name: IMAGE_NAME
+      description: Name of the image to build and push
+    - name: REGISTRY_URL
+      description: URL of the container registry (e.g., myreactappregistry.azurecr.io)
+    - name: DOCKERFILE_PATH
+      description: Path to the Dockerfile
+      default: ./Dockerfile
+    - name: CONTEXT_PATH
+      description: Context path for the Docker build
+      default: ./
+    - name: IMAGE_TAG 
+      description: Specific tag for the image (e.g., from pipelineRun.uid)
+  steps:
+    - name: build-and-push
+      image: gcr.io/kaniko-project/executor:latest
+      args:
+        - "--dockerfile=$(params.DOCKERFILE_PATH)"
+        - "--context=$(workspaces.source.path)/$(params.CONTEXT_PATH)"
+        - "--destination=$(params.REGISTRY_URL)/$(params.IMAGE_NAME):$(params.IMAGE_TAG)" 
+        - "--destination=$(params.REGISTRY_URL)/$(params.IMAGE_NAME):latest"
+      env:
+        - name: DOCKER_CONFIG
+          value: /kaniko/.docker
+      volumeMounts:
+        - name: docker-config
+          mountPath: /kaniko/.docker
+  volumes:
+    - name: docker-config
+      secret:
+        secretName: acr-secret 
+        items:
+          - key: .dockerconfigjson
+            path: config.json

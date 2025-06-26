@@ -1,0 +1,94 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: update-deployment-image
+  namespace: tekton
+spec:
+  workspaces:
+    - name: git-repo-dir
+      description: The workspace where the Git repository will be cloned.
+    - name: basic-auth
+      description: Workspace containing Git credentials and config.
+  params:
+    - name: TARGET_REPO_URL
+      description: URL of the Git repository containing the deployment.yaml to update.
+    - name: TARGET_REPO_BRANCH
+      description: Branch of the target Git repository to update.
+    - name: NEW_IMAGE_FULL_PATH
+      description: The full new image path with tag
+    - name: DEPLOYMENT_FILE_PATH
+      description: Path to the deployment.yaml file within the target repository (relative to the cloned repo root).
+      # CORRECTED DEFAULT VALUE: Should be relative to the root of the cloned repository (e.g., 'k8s/deployment.yaml')
+      default: k8s/deployment.yaml # Changed from manifests/k8s/deployment.yaml
+  steps:
+    - name: clone-target-repo
+      image: alpine/git:latest
+      env:
+        - name: HOME
+          value: /tekton/home # Set HOME for global git config and credential file location
+      # CORRECTED WORKING DIRECTORY FOR CLONE STEP:
+      # This step should operate from the base workspace path, then clone into 'manifests'.
+      workingDir: $(workspaces.git-repo-dir.path) # Changed from $(workspaces.git-repo-dir.path)/manifests
+      script: |
+        #!/bin/sh
+        set -ex
+
+        # Copy .git-credentials and .gitconfig from the secret volume to HOME
+        cp $(workspaces.basic-auth.path)/.git-credentials /tekton/home/.git-credentials
+        cp $(workspaces.basic-auth.path)/.gitconfig /tekton/home/.gitconfig # Copy .gitconfig as well
+        chmod 600 /tekton/home/.git-credentials
+        chmod 600 /tekton/home/.gitconfig # Ensure permissions are correct
+        
+        # Debugging: Show the content of .git-credentials (BE CAREFUL IN PROD, as it contains PAT)
+        echo "Content of /tekton/home/.git-credentials:" # Added for clarity
+        cat /tekton/home/.git-credentials
+        echo "Global Git config:" # Added for clarity
+
+        # Configure Git to use the store helper with the copied credentials file
+        git config --global credential.helper 'store --file /tekton/home/.git-credentials'
+        git config --global user.email "tekton@example.com"
+        git config --global user.name "Tekton CI"
+      
+        git config --global -l
+
+        # Perform the git clone operation. It will clone the repository into $(workspaces.git-repo-dir.path)/manifests
+        git clone --depth 1 -b $(params.TARGET_REPO_BRANCH) $(params.TARGET_REPO_URL) manifests
+        
+        # After cloning, ensure all files within 'manifests' are writable by the current user.
+        # This is crucial for fixing 'permission denied' errors for subsequent steps.
+        chmod -R go+rwX manifests
+
+    - name: update-image-tag
+      image: mikefarah/yq:latest
+      # This working directory is correct: it points to the root of the cloned repository.
+      workingDir: $(workspaces.git-repo-dir.path)/manifests # Change working directory to the cloned repo root
+      script: |
+        #!/bin/sh
+        set -ex
+        # DEPLOYMENT_FILE_PATH is now correctly relative to this working directory (e.g., 'k8s/deployment.yaml')
+        yq e '.spec.template.spec.containers[0].image = "$(params.NEW_IMAGE_FULL_PATH)"' -i $(params.DEPLOYMENT_FILE_PATH)
+        cat $(params.DEPLOYMENT_FILE_PATH)
+
+    - name: commit-and-push
+      image: alpine/git:latest
+      env:
+        - name: HOME
+          value: /tekton/home
+      # This working directory is correct.
+      workingDir: $(workspaces.git-repo-dir.path)/manifests
+      script: |
+        #!/bin/sh
+        set -ex
+        # Copy .git-credentials and .gitconfig again for robustness, though global settings should persist
+        cp $(workspaces.basic-auth.path)/.git-credentials /tekton/home/.git-credentials
+        cp $(workspaces.basic-auth.path)/.gitconfig /tekton/home/.gitconfig
+        chmod 600 /tekton/home/.git-credentials
+        chmod 600 /tekton/home/.gitconfig
+
+        git config --global credential.helper 'store --file /tekton/home/.git-credentials'
+        git config --global user.email "tekton@example.com"
+        git config --global user.name "Tekton CI"
+
+        git add $(params.DEPLOYMENT_FILE_PATH)
+        git commit -m "Update image in deployment.yaml to $(params.NEW_IMAGE_FULL_PATH) by Tekton"
+        git push origin $(params.TARGET_REPO_BRANCH)

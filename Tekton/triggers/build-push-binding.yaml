@@ -1,0 +1,19 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: build-push-binding
+  namespace: tekton
+spec:
+  params:
+    - name: repo-url
+      value: $(body.resource.repository.remoteUrl)
+    - name: revision
+      value: $(extensions.branch-name)
+    - name: image
+      value: <your_repository_name>
+    - name: acr-username
+      value: <acr_username>
+    - name: acr-password
+      value: <acr_token>
+    - name: context
+      value: <folder_path>
